@@ -24,6 +24,9 @@
 - Local stylesheet: rgb(12, 34, 56)
 - Parent access: parent-blocked (SecurityError)
 - Parent unchanged: true
+- Frame-local storage: 7
+- Pointer input: CLICK_OK
+- Keyboard input: KEY_OK
 
 ## PDF
 

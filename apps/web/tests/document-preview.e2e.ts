@@ -138,10 +138,15 @@ describe.skipIf(MODE === 'record')('web e2e: document preview through Files', ()
       writeFile(join(cwd, 'smoke.html'), [
         '<!doctype html><link rel="stylesheet" href="./local.css">',
         '<h1>HTML smoke</h1><p id="result">pending</p><p id="local-result">pending</p><p id="parent-result">pending</p>',
+        '<button id="interaction" type="button">Move snake</button><p id="interaction-result">pending</p>',
         '<p id="outside-result">pending</p>',
         '<script>document.getElementById("result").textContent="INLINE_OK";',
         'try{parent.document.documentElement.setAttribute("data-document-preview-escape","true");document.getElementById("parent-result").textContent="parent-accessible"}',
         'catch(error){const result=document.getElementById("parent-result");result.textContent="parent-blocked";result.dataset.error=error.name}</script>',
+        '<script>localStorage.setItem("snake-high-score","7");document.documentElement.dataset.storage=localStorage.getItem("snake-high-score");',
+        'const interaction=document.getElementById("interaction-result");',
+        'document.getElementById("interaction").addEventListener("click",()=>{interaction.textContent="CLICK_OK"});',
+        'document.addEventListener("keydown",event=>{if(event.key==="ArrowRight")interaction.textContent="KEY_OK"})</script>',
         '<script src="./local.js"></script>',
         `<script src="${outsideReference}"></script>`,
       ].join('\n')),
@@ -289,6 +294,13 @@ describe.skipIf(MODE === 'record')('web e2e: document preview through Files', ()
     await expect.poll(() => html.locator('#parent-result').innerText()).toBe('parent-blocked')
     expect(await html.locator('#parent-result').getAttribute('data-error')).toBe('SecurityError')
     expect(await page.locator('html').getAttribute('data-document-preview-escape')).toBeNull()
+    expect(await html.locator('html').getAttribute('data-storage')).toBe('7')
+    await html.getByRole('button', { name: 'Move snake', exact: true }).click()
+    await expect.poll(() => html.locator('#interaction-result').innerText()).toBe('CLICK_OK')
+    const pointerResult = await html.locator('#interaction-result').innerText()
+    await page.keyboard.press('ArrowRight')
+    await expect.poll(() => html.locator('#interaction-result').innerText()).toBe('KEY_OK')
+    const keyboardResult = await html.locator('#interaction-result').innerText()
     await successShot(page, 'html')
     sections.push([
       '## HTML', '',
@@ -300,6 +312,9 @@ describe.skipIf(MODE === 'record')('web e2e: document preview through Files', ()
       `- Local stylesheet: ${await html.locator('#local-result').evaluate(node => getComputedStyle(node).color)}`,
       `- Parent access: ${await html.locator('#parent-result').innerText()} (${await html.locator('#parent-result').getAttribute('data-error')})`,
       `- Parent unchanged: ${String(await page.locator('html').getAttribute('data-document-preview-escape') === null)}`,
+      `- Frame-local storage: ${await html.locator('html').getAttribute('data-storage')}`,
+      `- Pointer input: ${pointerResult}`,
+      `- Keyboard input: ${keyboardResult}`,
     ].join('\n'))
 
     await openFile('smoke.pdf')

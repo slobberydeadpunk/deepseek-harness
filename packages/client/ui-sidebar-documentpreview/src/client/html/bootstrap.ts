@@ -17,7 +17,8 @@ export interface HtmlBundle {
 
 /**
  * Build the outer iframe document. Its resource URLs are created inside the sandbox,
- * because that opaque origin cannot load resource URLs created by the parent.
+ * because that opaque origin cannot load resource URLs created by the parent. The
+ * bootstrap also supplies frame-local Web Storage before source scripts execute.
  * @param bundle - complete HTML bytes and optional static dependencies.
  * @returns bootstrap HTML; invalid UTF-8 throws before navigation.
  */
@@ -29,6 +30,28 @@ export function createHtmlDocument(bundle: HtmlBundle): string {
   return `<!doctype html><meta charset="utf-8"><script>(()=>{
 const bytes=data=>Uint8Array.from(atob(data),character=>character.charCodeAt(0));
 const text=data=>new TextDecoder('utf-8',{fatal:true}).decode(bytes(data));
+const memoryStorage=()=>{
+  const values=new Map();
+  return {
+    get length(){return values.size},
+    clear(){values.clear()},
+    getItem(key){key=String(key);return values.has(key)?values.get(key):null},
+    key(index){return [...values.keys()][Number(index)]??null},
+    removeItem(key){values.delete(String(key))},
+    setItem(key,value){values.set(String(key),String(value))},
+  };
+};
+const installStorage=()=>{
+  for(const name of ['localStorage','sessionStorage']){
+    try{
+      const storage=globalThis[name];
+      if(storage!==undefined){void storage.length;continue}
+    }catch(error){
+      if(!(error instanceof DOMException)||error.name!=='SecurityError')throw error;
+    }
+    Object.defineProperty(globalThis,name,{configurable:true,enumerable:true,value:memoryStorage()});
+  }
+};
 const bundle=JSON.parse(text("${payload}"));
 let html=bundle.html;
 if(bundle.assets.length){
@@ -43,6 +66,6 @@ if(bundle.assets.length){
   }
   html='<!doctype html>'+parsed.documentElement.outerHTML;
 }
-document.open();document.write(html);document.close();
+document.open();installStorage();document.write(html);document.close();
 })()</script>`
 }

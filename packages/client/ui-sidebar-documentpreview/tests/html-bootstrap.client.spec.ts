@@ -13,10 +13,19 @@ function run(html: string) {
   const close = vi.fn()
   const createObjectURL = vi.fn<(blob: Blob) => string>().mockImplementation(() => `blob:null/resource-${createObjectURL.mock.calls.length}`)
   const script = html.slice(html.indexOf('<script>') + '<script>'.length, html.lastIndexOf('</script>'))
-  runInNewContext(script, {
-    document: { open, write, close }, URL: { createObjectURL }, Blob, DOMParser, atob, TextDecoder,
-  })
-  return { open, write, close, createObjectURL, document: new DOMParser().parseFromString(write.mock.calls[0]![0], 'text/html') }
+  const context = {
+    document: { open, write, close }, URL: { createObjectURL }, Blob, DOMParser, DOMException, atob, TextDecoder,
+  }
+  runInNewContext(script, context)
+  return {
+    open,
+    write,
+    close,
+    createObjectURL,
+    document: new DOMParser().parseFromString(write.mock.calls[0]![0], 'text/html'),
+    localStorage: Reflect.get(context, 'localStorage') as Storage,
+    sessionStorage: Reflect.get(context, 'sessionStorage') as Storage,
+  }
 }
 
 const utf8 = (text: string): Uint8Array<ArrayBuffer> => new TextEncoder().encode(text)
@@ -50,6 +59,23 @@ describe('HTML bootstrap', () => {
     expect(result.document.querySelector('link')?.getAttribute('href')).toBe('blob:null/resource-2')
     expect(result.document.querySelector('base')?.getAttribute('href')).toBe('https://example.invalid/assets/')
     expect(result.document.documentElement.lang).toBe('en')
+  })
+
+  it('supplies independent frame-local Web Storage before writing the source document', () => {
+    const { localStorage, sessionStorage } = run(createHtmlDocument({ data: utf8('<p>game</p>'), assets: [] }))
+    expect(localStorage.length).toBe(0)
+    expect(localStorage.getItem('score')).toBeNull()
+    localStorage.setItem('score', '7')
+    localStorage.setItem('level', '2')
+    localStorage.setItem('score', '8')
+    expect(localStorage.length).toBe(2)
+    expect(localStorage.key(0)).toBe('score')
+    expect(localStorage.getItem('score')).toBe('8')
+    expect(sessionStorage.getItem('score')).toBeNull()
+    localStorage.removeItem('score')
+    expect(localStorage.getItem('score')).toBeNull()
+    localStorage.clear()
+    expect(localStorage.length).toBe(0)
   })
 
   it('rejects non-UTF-8 root and asset bytes before creating an iframe document', () => {
