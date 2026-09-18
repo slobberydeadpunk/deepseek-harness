@@ -9,6 +9,7 @@ import {
   installProfileResolution,
   registerWorkerResolution,
   type ProfileResolutionBehavior,
+  type ProfileResolutionOptions,
   type ProfileResolutionRegistration,
 } from './resolver.ts'
 import type { ProfileResolutionGeneration } from '../profile.ts'
@@ -40,6 +41,8 @@ export interface PluginPackagesConfig {
   generation?: ProfileResolutionGeneration
   /** Enforce the table or compare it with a materialized fallback. */
   behavior?: ProfileResolutionBehavior
+  /** Source-launch routing constraints applied before built package exports. */
+  sourceResolution?: ProfileResolutionOptions
 }
 
 function readPackage(dir: string, fallbackName: string): PluginPackage | undefined {
@@ -62,14 +65,16 @@ export class PluginPackages extends Service {
   private packages = new Map<string, PluginPackage | undefined>()
   private readonly resolver: ProfileResolutionRegistration | undefined
   private readonly behavior: ProfileResolutionBehavior
+  private readonly sourceResolution: ProfileResolutionOptions
   private disposeWorkerResolution: (() => void) | undefined
 
   constructor(ctx: Context, config: PluginPackagesConfig = {}) {
     super(ctx, 'pluginPackages')
     this.behavior = config.behavior ?? 'enforce'
+    this.sourceResolution = config.sourceResolution === undefined ? {} : { ...config.sourceResolution }
     if (config.generation === undefined) return
-    const resolver = installProfileResolution(config.generation, this.behavior)
-    this.disposeWorkerResolution = registerWorkerResolution(config.generation, this.behavior)
+    const resolver = installProfileResolution(config.generation, this.behavior, this.sourceResolution)
+    this.disposeWorkerResolution = registerWorkerResolution(config.generation, this.behavior, this.sourceResolution)
     this.resolver = resolver
     ctx.effect(() => () => {
       this.disposeWorkerResolution?.()
@@ -86,7 +91,7 @@ export class PluginPackages extends Service {
     this.resolver.replace(generation)
     this.packages = new Map()
     this.disposeWorkerResolution?.()
-    this.disposeWorkerResolution = registerWorkerResolution(generation, this.behavior)
+    this.disposeWorkerResolution = registerWorkerResolution(generation, this.behavior, this.sourceResolution)
   }
 
   /**

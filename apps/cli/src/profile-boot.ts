@@ -79,6 +79,12 @@ export function homePatchPath(): string {
 /** Absolute path of this dsh installation's package.json (both anchors: src/ and lib/ sit one level under apps/cli). */
 export const INSTALL_ANCHOR = fileURLToPath(new URL('../package.json', import.meta.url))
 
+// The checked-in source entry opts profile imports into the same tsx-backed
+// workspace plane as its own imports. Bundled and installed entries stay on lib/.
+const SOURCE_WORKSPACE_ROOT = import.meta.url.endsWith('/src/profile-boot.ts')
+  ? fileURLToPath(new URL('../../../', import.meta.url))
+  : undefined
+
 /** The empty root entry list every profile tree patches over. */
 const PROFILE_ROOT_CONFIG = `# dsh profile root — an empty entry list. The tree is composed as patches:
 # each bundle in package.json's dsh.profile.bundles, then cordis.patch.yml, then any
@@ -312,6 +318,9 @@ export async function runProfile(options: RunProfileOptions): Promise<{ ctx: Con
       await hostCtx.plugin(PluginPackages, resolutionMode === 'link' ? {} : {
         generation: composed.resolution,
         behavior: resolutionMode === 'dual' ? 'verify' : 'enforce',
+        ...(resolutionMode === 'runtime' && SOURCE_WORKSPACE_ROOT !== undefined
+          ? { sourceResolution: { sourceRoot: SOURCE_WORKSPACE_ROOT } }
+          : {}),
       })
       // The command line and bounded exit request are launcher facts available
       // to every app plugin that injects the argument snapshot.

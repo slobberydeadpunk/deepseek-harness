@@ -7,6 +7,7 @@ const harness = vi.hoisted(() => ({
   data: undefined as {
     generation: ProfileResolutionGeneration
     behavior: 'enforce' | 'verify'
+    options?: { sourceRoot?: string }
   } | undefined,
   install: vi.fn(),
 }))
@@ -30,14 +31,27 @@ it('does nothing without inherited profile resolution data', async () => {
   expect(harness.install).not.toHaveBeenCalled()
 })
 
-it('installs the inherited generation and behavior', async () => {
+it('installs the inherited generation, behavior, and source routing', async () => {
   const generation: ProfileResolutionGeneration = {
     profilesDir: '/profiles',
     profileDir: '/profiles/test',
     localPackageNames: [],
     entries: [],
   }
-  harness.data = { generation, behavior: 'verify' }
+  const options = { sourceRoot: '/workspace' }
+  harness.data = { generation, behavior: 'verify', options }
   await import('../src/profile-resolution/worker-bootstrap.ts')
-  expect(harness.install).toHaveBeenCalledWith(generation, 'verify')
+  expect(harness.install).toHaveBeenCalledWith(generation, 'verify', options)
+})
+
+it('defaults source routing for generation data published without it', async () => {
+  const generation: ProfileResolutionGeneration = {
+    profilesDir: '/profiles',
+    profileDir: '/profiles/test',
+    localPackageNames: [],
+    entries: [],
+  }
+  harness.data = { generation, behavior: 'enforce' }
+  await import('../src/profile-resolution/worker-bootstrap.ts')
+  expect(harness.install).toHaveBeenCalledWith(generation, 'enforce', {})
 })

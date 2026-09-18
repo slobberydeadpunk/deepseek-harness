@@ -380,7 +380,10 @@ function nodeCompatSmokeGates(options: { cliSmoke?: boolean } = {}): Gate[] {
       'vitest',
       'run',
       'apps/cli/tests/source-launch.compat.spec.ts',
-    ], { label: 'dsh source-launch smoke' }),
+    ], {
+      label: 'dsh source-launch smoke',
+      ...options.cliSmoke ? { env: { DSH_REQUIRE_BUILT_CLI_SMOKE: '1' } } : {},
+    }),
     pnpmExec('vitest-jsdom-smoke', [
       'vitest',
       'run',

@@ -286,6 +286,108 @@ describe('profile resolution generation', { concurrent: false }, () => {
     expect(await importFrom('resolution-lib', parent)).toMatchObject({ marker: 1 })
   })
 
+  it('keeps a source launch on a trusted TypeScript workspace entry', async () => {
+    const f = fixture()
+    const generation = await generationOf(f)
+    const sourceRoot = join(f.root, 'workspace')
+    const sourcePackage = join(sourceRoot, 'resolution-lib')
+    file(join(sourcePackage, 'package.json'), JSON.stringify({
+      name: 'resolution-lib',
+      type: 'module',
+      exports: './index.ts',
+    }))
+    const sourceEntry = join(sourcePackage, 'index.ts')
+    file(sourceEntry, 'export const marker: number = 7\n')
+    mkdirSync(join(generation.profilesDir, 'node_modules'), { recursive: true })
+    symlinkSync(
+      sourcePackage,
+      join(generation.profilesDir, 'node_modules', 'resolution-lib'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    )
+    const registration = installProfileResolution(generation, 'enforce', { sourceRoot })
+    registrations.push(registration)
+    const parent = pathToFileURL(join(f.profile.dir, 'entry.mjs')).href
+
+    expect(resolveFrom('resolution-lib', parent)).toBe(pathToFileURL(sourceEntry).href)
+    expect(resolveFrom('resolution-lib', parent, { type: 'javascript' })).toBe(pathToFileURL(sourceEntry).href)
+    expect(await importFrom('resolution-lib', parent)).toMatchObject({ marker: 7 })
+    expect(createRequire(join(f.profile.dir, 'entry.cjs'))('resolution-lib')).toEqual({ marker: 1 })
+  })
+
+  it('uses the generation when source lookup misses or resolves outside the trusted TypeScript tree', async () => {
+    const missing = fixture('missing-source')
+    const missingGeneration = await generationOf(missing)
+    const missingRegistration = installProfileResolution(missingGeneration, 'enforce', {
+      sourceRoot: join(missing.root, 'workspace'),
+    })
+    registrations.push(missingRegistration)
+    expect(resolveFrom('missing-source', pathToFileURL(join(missing.profile.dir, 'entry.mjs')).href))
+      .toBe(pathToFileURL(join(missing.installed, 'index.js')).href)
+
+    missingRegistration.dispose()
+    registrations.pop()
+
+    const untrusted = fixture('untrusted-source')
+    const untrustedGeneration = await generationOf(untrusted)
+    const ambientPackage = join(untrusted.root, 'ambient', 'untrusted-source')
+    file(join(ambientPackage, 'package.json'), JSON.stringify({
+      name: 'untrusted-source',
+      type: 'module',
+      exports: './index.ts',
+    }))
+    file(join(ambientPackage, 'index.ts'), 'export const marker: number = 8\n')
+    mkdirSync(join(untrustedGeneration.profilesDir, 'node_modules'), { recursive: true })
+    symlinkSync(
+      ambientPackage,
+      join(untrustedGeneration.profilesDir, 'node_modules', 'untrusted-source'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    )
+    const untrustedRegistration = installProfileResolution(untrustedGeneration, 'enforce', {
+      sourceRoot: join(untrusted.root, 'workspace'),
+    })
+    registrations.push(untrustedRegistration)
+    expect(resolveFrom('untrusted-source', pathToFileURL(join(untrusted.profile.dir, 'entry.mjs')).href))
+      .toBe(pathToFileURL(join(untrusted.installed, 'index.js')).href)
+  })
+
+  it('uses the generation when a trusted workspace request resolves to JavaScript', async () => {
+    const f = fixture('built-source')
+    const generation = await generationOf(f)
+    const sourceRoot = join(f.root, 'workspace')
+    const builtPackage = join(sourceRoot, 'built-source')
+    pkg(builtPackage, 'built-source', 9)
+    mkdirSync(join(generation.profilesDir, 'node_modules'), { recursive: true })
+    symlinkSync(
+      builtPackage,
+      join(generation.profilesDir, 'node_modules', 'built-source'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    )
+    const registration = installProfileResolution(generation, 'enforce', { sourceRoot })
+    registrations.push(registration)
+
+    expect(resolveFrom('built-source', pathToFileURL(join(f.profile.dir, 'entry.mjs')).href))
+      .toBe(pathToFileURL(join(f.installed, 'index.js')).href)
+  })
+
+  it('preserves non-missing source lookup failures', async () => {
+    const f = fixture('invalid-source')
+    const generation = await generationOf(f)
+    const sourceRoot = join(f.root, 'workspace')
+    const invalidPackage = join(sourceRoot, 'invalid-source')
+    file(join(invalidPackage, 'package.json'), '{')
+    mkdirSync(join(generation.profilesDir, 'node_modules'), { recursive: true })
+    symlinkSync(
+      invalidPackage,
+      join(generation.profilesDir, 'node_modules', 'invalid-source'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    )
+    const registration = installProfileResolution(generation, 'enforce', { sourceRoot })
+    registrations.push(registration)
+
+    expect(() => resolveFrom('invalid-source', pathToFileURL(join(f.profile.dir, 'entry.mjs')).href))
+      .toThrow(/Invalid package config/u)
+  })
+
   it('routes a scoped CommonJS package through its containing node_modules directory', async () => {
     const f = fixture('@scope/resolution-lib')
     const registration = installProfileResolution(await generationOf(f))
@@ -1497,9 +1599,10 @@ describe('profile resolution generation', { concurrent: false }, () => {
     const generation = await generationOf(f)
     const key = '@deepseek-ai/dsh-app-boot/profile-resolution'
     const previous = getEnvironmentData(key)
-    const dispose = registerWorkerResolution(generation, 'verify')
+    const options = { sourceRoot: join(f.root, 'workspace') }
+    const dispose = registerWorkerResolution(generation, 'verify', options)
     try {
-      expect(getEnvironmentData(key)).toEqual({ generation, behavior: 'verify' })
+      expect(getEnvironmentData(key)).toEqual({ generation, behavior: 'verify', options })
     } finally {
       dispose()
     }

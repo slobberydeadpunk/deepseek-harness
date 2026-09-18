@@ -168,12 +168,18 @@ describe('profile package metadata service', () => {
     const previous = getEnvironmentData(key)
     const ctx = new Context()
     contexts.push(ctx)
-    await ctx.plugin(PluginPackages, { generation: initial, behavior: 'verify' })
+    const options = { sourceRoot: root }
+    await ctx.plugin(PluginPackages, {
+      generation: initial,
+      behavior: 'verify',
+      sourceResolution: options,
+    })
     const initialWorkerData = getEnvironmentData(key) as {
       generation: ProfileResolutionGeneration
       behavior: string
+      options: { sourceRoot: string }
     }
-    expect(initialWorkerData).toEqual({ generation: initial, behavior: 'verify' })
+    expect(initialWorkerData).toEqual({ generation: initial, behavior: 'verify', options })
 
     const added = join(root, 'added')
     const addedAnchor = pkg(added, '2.0.0', 'added-metadata')
@@ -193,6 +199,7 @@ describe('profile package metadata service', () => {
     expect(getEnvironmentData(key)).toEqual({
       generation: next,
       behavior: 'verify',
+      options,
     })
     expect(ctx.pluginPackages.packageOf(
       'added-metadata', pathToFileURL(join(profileDir, 'entry.mjs')).href,

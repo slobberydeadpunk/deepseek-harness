@@ -38,6 +38,8 @@ resolver 使用 `node-addon-require-builtin` 读取 `internal/modules/esm/loader
 
 两个适配器调用同一个路由函数。builtin、相对或绝对路径、URL、profile 作用域外 parent 和支持的查找以外的显式调用都直接委托原生实现。`#imports` 请求使用所属 manifest 中的 Node 映射；外部 bare target 按相同 conditions 遵循本地包、generation 和 after-fallback 的选包顺序，精确 target 解析仍由 Node 负责。对于作用域内的 bare request，package self-reference 保留原 parent，即使 npm alias 使安装目录使用另一个名称。Node 能在虚拟共享 fallback 之前从 profile 本地包或插件私有包解析到所请求入口时，也保留原 parent；没有 `exports` 的 CommonJS 包目录仅缺少所请求 subpath 时，不会压过 fallback。其他请求在 generation 命中时通过该条目的声明锚点解析，未命中时从虚拟 fallback 之后继续原生查找。显式 CommonJS path 列表按调用方顺序，对每个 path 独立应用相同的插入规则。
 
+源码 `dsh` 入口会增加一个仅用于 ESM 的约束，但不改变 generation 的选包结果。在通过声明锚点路由 generation 命中之前，适配器会让已经安装的 tsx 钩子从原始 profile importer 解析，并且只接受启动器提供的 checkout 根目录下的 TypeScript 文件。未命中或其他结果会继续走 generation 路由。普通 Node、构建后的 CLI、pkg 和 Electron 启动不会提供 checkout 根目录，因此其解析保持不变。CommonJS 不接收该源码优先级，因为受支持的 CLI 源码图按设计只使用 ESM-only tsx 钩子。
+
 适配器完成路由后调用捕获的原生 resolver。exports、import/require conditions、main、subpath、扩展名、原生缓存和错误码仍归 Node 处理。路由后的 ESM 失败会把 Node 诊断中的内部查找锚点替换为原始 importer。选中包的无效 export 或缺失目标不会触发另一个同名候选。CommonJS 不替换 `_findPath`，也不复制 `_resolveFilename`。
 
 保证范围是当前线程安装后发生的 Node 默认 `import`、`import()`、`import.meta.resolve`、`require` 和 `require.resolve`。已经链接的模块、自定义 `vm` linker、不透明的非 Node importer 和第三方 Worker 不在透明保证范围。
@@ -54,7 +56,7 @@ resolution generation 列出可用 fallback 包；Loader entries 组成活动插
 
 ### Worker 与 generation 更新
 
-主线程通过 Worker environment data 发布当前 generation 的可结构化克隆表示和 profile scope。每个 Harness 自有 Worker 构建产物通过构建 banner 获取自己的 ESM/CJS Internal 并安装同一适配器，不重新遍历 manifest。bootstrap bundle 不静态导入任何包。源码 Worker 入口保持原有自包含依赖；第三方 Worker 保持不变。
+主线程通过 Worker environment data 发布当前 generation、profile scope 和可选的源码启动根目录的可结构化克隆表示。每个 Harness 自有 Worker 构建产物通过构建 banner 获取自己的 ESM/CJS Internal 并安装同一适配器，不重新遍历 manifest。bootstrap bundle 不静态导入任何包。源码 Worker 入口保持原有自包含依赖；第三方 Worker 保持不变。
 
 新 Worker 继承最新发布的 generation。已运行的 Worker 保留启动时继承的 generation，因此发布后继 generation 的调用方必须重启它们。ESM bootstrap 无法影响其执行前已链接的静态依赖，因此 Worker bundle 必须保证 bootstrap 之前的静态 import 可由原生 Node 解析，需要 profile resolver 的业务入口在 bootstrap 后通过 dynamic import 启动。
 
@@ -86,7 +88,7 @@ generation 构造发生在启动或显式更新阶段，不属于单次 resolve�
 
 实现期间的一次性本地测量用 plain Node 在全新进程中执行构建后的 JavaScript，并与完全没有安装 hook 的进程比较。测量脚本和结果未提交，这些数据不是 benchmark 或 CI 预算。七轮交替顺序覆盖 outside、profile-local 和 fallback 的 dynamic import、`import.meta.resolve`、require、`require.resolve`。Node 22.19、24.18 和 26.8 的热路径中位数最大正向回退为 4.5%。Node 24.18 的 256 包 cold workload 最大回退为 11.2%，generation 构造中位数为 16.027 ms；32 包本地 `require.resolve` 因固定启动成本在整批增加 1.033 ms（+34.7%）。
 
-行为测试在同一包树上比较运行时 generation 与磁盘 materializer，再覆盖根顺序、传递依赖和 peer、本地与外层优先级、exports 与 subpath 错误、conditions 和显式 CommonJS options。Node 兼容矩阵会在受支持的内部 loader 变体上运行 resolver、service 和 bootstrap 规格。Worker 测试通过 mock 线程与 native loader 接口验证 environment data 发布和 bootstrap 安装，但不会启动构建后的 Worker。generation 测试证明构造失败不发布部分状态，成功换代只做原子引用替换。
+行为测试在同一包树上比较运行时 generation 与磁盘 materializer，再覆盖根顺序、传递依赖和 peer、本地与外层优先级、exports 与 subpath 错误、conditions、显式 CommonJS options，以及可信源码目标相对于未命中、构建目标、根目录外目标和无效目标的行为。Node 兼容矩阵会在受支持的内部 loader 变体上运行 resolver、service 和 bootstrap 规格。源码启动冒烟测试会在 `node --import tsx/esm` 下完成一次真实的配置 plugin 工具往返。Worker 测试通过 mock 线程与 native loader 接口验证 environment data 发布和 bootstrap 安装，但不会启动构建后的 Worker。generation 测试证明构造失败不发布部分状态，成功换代只做原子引用替换。
 
 ## Alternatives considered
 
@@ -108,6 +110,7 @@ generation 构造发生在启动或显式更新阶段，不属于单次 resolve�
 - link-only、dual 和 runtime-only 测试消费同一个 generation；runtime 启动既不写入也不退休模块解析数据。
 - pkg 与 Electron 载体选择 runtime 解析；Electron 以 Node 模式从 ASAR 承载的 dsh 依赖树执行 Host，原生可执行条目保持 unpacked。
 - ESM 与 CommonJS 适配器共享同一个路由器，并把最终解析委托给 Node，不使用 `module.registerHooks` 或替换 `_findPath`。
+- 源码启动器只会在 generation fallback 之前接受现有 tsx 钩子解析出的仓库自有 TypeScript 结果；真实 headless 冒烟测试会完成一次注册表跨越配置插件的工具调用。
 - 生产 package metadata 查询不记录 Loader import 结果，也不包装 Entry、registry、tree 或 HMR 方法。
 - Node 兼容矩阵会在受支持的 loader 接口上运行主线程 resolver 规格；service 和 bootstrap 规格覆盖 Worker environment data 与安装接口，但不会启动构建后的 Worker。
 - 一次性 plain Node 构建产物测量得到上述相对无 hook Node 的热路径和 cold 观察结果；脚本与结果并未提交为证据。

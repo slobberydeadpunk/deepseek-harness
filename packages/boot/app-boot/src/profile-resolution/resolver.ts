@@ -87,6 +87,12 @@ interface CompiledGeneration {
 /** Whether runtime resolution redirects requests or verifies the materialized backend. */
 export type ProfileResolutionBehavior = 'enforce' | 'verify'
 
+/** Optional source-launch routing layered over one profile generation. */
+export interface ProfileResolutionOptions {
+  /** Repository root whose TypeScript files may satisfy workspace package requests before built exports. */
+  readonly sourceRoot?: string
+}
+
 /** Active resolver registration in one Node isolate. */
 export interface ProfileResolutionRegistration {
   /**
@@ -283,6 +289,24 @@ function sameResolution(left: string, right: string): boolean {
   const leftPath = left.startsWith('file:') ? fileURLToPath(left) : left
   const rightPath = right.startsWith('file:') ? fileURLToPath(right) : right
   return canonicalPath(leftPath) === canonicalPath(rightPath)
+}
+
+function isTypeScriptSourceResolution(result: ResolveResult, sourcePaths: readonly string[]): boolean {
+  /* v8 ignore next -- Node returns file URLs for successfully resolved filesystem packages */
+  if (!result.url.startsWith('file:')) return false
+  let path: string
+  try {
+    path = canonicalPath(fileURLToPath(result.url))
+  } catch {
+    /* v8 ignore next -- Node does not return malformed file URLs from a successful resolution */
+    return false
+  }
+  if (!startsWithin(path, sourcePaths)) return false
+  return ['.ts', '.tsx', '.mts', '.cts'].some(extension => path.endsWith(extension))
+}
+
+function isEsmPackageMiss(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === 'ERR_MODULE_NOT_FOUND'
 }
 
 /** One mutable pointer to immutable generation data. */
@@ -618,14 +642,17 @@ function assertOptionalEquivalent(
  * Install one profile generation on Node's default ESM and CommonJS resolvers.
  * @param generation - complete package table and profile scope.
  * @param behavior - enforce the generation, or verify a materialized generation.
+ * @param options - optional source-launch routing constraints.
  * @returns a registration that replaces the generation or restores the native methods.
  */
 export function installProfileResolution(
   generation: ProfileResolutionGeneration,
   behavior: ProfileResolutionBehavior = 'enforce',
+  options: ProfileResolutionOptions = {},
 ): ProfileResolutionRegistration {
   const router = new ResolutionRouter(generation)
   const { esm, esmDefaultResolve, esmConditions, cjs, cjsConditions, modern } = internalModules()
+  const sourcePaths = options.sourceRoot === undefined ? [] : prefixes(options.sourceRoot)
   const esmScope = new Map<string, boolean>()
   const profilePaths = [
     ...prefixes(generation.profilesDir),
@@ -692,23 +719,53 @@ export function installProfileResolution(
       }
       const routedParent = pathToFileURL(route.kind === 'fallback' ? route.entry.declarer : route.parent).href
       if (behavior === 'enforce') {
-        const previous = delegatedEsm
-        delegatedEsm = { parent: routedParent, request }
-        const restoreImporter = (error: unknown): never => throwWithImporter(error, routedParent, parent)
-        try {
-          let result: ResolveResult | Promise<ResolveResult>
+        const resolveRouted = (): ResolveResult | Promise<ResolveResult> => {
+          const previous = delegatedEsm
+          delegatedEsm = { parent: routedParent, request }
+          const restoreImporter = (error: unknown): never => throwWithImporter(error, routedParent, parent)
           try {
-            result = native(request, routedParent, attributes)
+            let result: ResolveResult | Promise<ResolveResult>
+            try {
+              result = native(request, routedParent, attributes)
+            } catch (error) {
+              return restoreImporter(error)
+            }
+            /* v8 ignore next -- Node 24+ resolves synchronously; the Node 22 matrix covers its Promise result */
+            if (result instanceof Promise) return result.catch(restoreImporter)
+            if (cacheable) state.esm = result
+            return result
+          } finally {
+            delegatedEsm = previous
+          }
+        }
+        if (route.kind === 'fallback' && sourcePaths.length > 0) {
+          let source: ResolveResult | Promise<ResolveResult>
+          try {
+            source = native(request, parent, attributes)
           } catch (error) {
-            return restoreImporter(error)
+            if (!isEsmPackageMiss(error)) throw error
+            return resolveRouted()
           }
           /* v8 ignore next -- Node 24+ resolves synchronously; the Node 22 matrix covers its Promise result */
-          if (result instanceof Promise) return result.catch(restoreImporter)
-          if (cacheable) state.esm = result
-          return result
-        } finally {
-          delegatedEsm = previous
+          if (source instanceof Promise) {
+            return source.then(
+              (result) => {
+                if (!isTypeScriptSourceResolution(result, sourcePaths)) return resolveRouted()
+                if (cacheable) state.esm = result
+                return result
+              },
+              (error: unknown) => {
+                if (!isEsmPackageMiss(error)) throw error
+                return resolveRouted()
+              },
+            )
+          }
+          if (isTypeScriptSourceResolution(source, sourcePaths)) {
+            if (cacheable) state.esm = source
+            return source
+          }
         }
+        return resolveRouted()
       }
       const actual = native(request, parent, attributes)
       const previous = delegatedEsm
@@ -963,13 +1020,19 @@ export function installProfileResolution(
  * Publish one generation for Harness-owned Workers.
  * @param generation - complete package table and profile scope.
  * @param behavior - enforce or verify the generation in newly created Workers.
+ * @param options - optional source-launch routing constraints inherited by Workers.
  * @returns a disposer restoring the previous thread environment data.
  */
 export function registerWorkerResolution(
   generation: ProfileResolutionGeneration,
   behavior: ProfileResolutionBehavior = 'enforce',
+  options: ProfileResolutionOptions = {},
 ): () => void {
   const previous = getEnvironmentData(WORKER_RESOLUTION_KEY)
-  setEnvironmentData(WORKER_RESOLUTION_KEY, { generation, behavior })
+  setEnvironmentData(WORKER_RESOLUTION_KEY, {
+    generation,
+    behavior,
+    ...(options.sourceRoot === undefined ? {} : { options }),
+  })
   return () => { setEnvironmentData(WORKER_RESOLUTION_KEY, previous) }
 }
