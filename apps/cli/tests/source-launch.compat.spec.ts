@@ -4,16 +4,15 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execa } from 'execa'
 import { describe, expect, it } from 'vitest'
+import { testProfileResolution } from './profiles/headless/tests/profile-resolution.ts'
 
 /**
- * Keyless smoke for SOURCE `dsh` execution: run `apps/cli/src/bin.ts`
- * with the exact production runtime vector (`node --import tsx/esm`, the
- * vector the root `dsh` script invokes directly) and assert the
- * required-config diagnostic. The Node compatibility matrix runs this file,
- * so a Node release changing module hooks or TypeScript handling breaks this
- * gate instead of every developer's `pnpm dsh`. Its Node 22 artifact-backed
- * leg also boots the public source command through one real tool round trip;
- * the built-bin suite separately covers the published `lib/` entry.
+ * Keyless source-launch and profile-resolution checks through the production
+ * tsx ESM-only entry. The Node compatibility matrix runs this file without a
+ * build; source tool execution with native/generated dependencies belongs to
+ * the build-backed source-tool suite. When built CLI artifacts are required,
+ * this file also checks that configured plugins and tool consumers stay on
+ * one source module plane.
  */
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url))
@@ -25,6 +24,8 @@ const headlessProfilePatch = join(
 const requireBuiltArtifacts = process.env.DSH_REQUIRE_BUILT_CLI_SMOKE === '1'
 
 describe('dsh SOURCE launcher (node --import tsx/esm)', () => {
+  testProfileResolution('src')
+
   it('launches the source CLI without building', async () => {
     const rootPackage = JSON.parse(await readFile(new URL('../../../package.json', import.meta.url), 'utf8')) as {
       readonly scripts?: Record<string, string>

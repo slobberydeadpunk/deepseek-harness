@@ -1,12 +1,11 @@
-/** Worker bootstrap installs only the generation inherited from its parent. */
+/** Worker bootstrap installs only the resolution inherited from its parent. */
 
 import { beforeEach, expect, it, vi } from 'vitest'
-import type { ProfileResolutionGeneration } from '../src/profile.ts'
+import type { RuntimeResolution } from '../src/profile.ts'
 
 const harness = vi.hoisted(() => ({
   data: undefined as {
-    generation: ProfileResolutionGeneration
-    behavior: 'enforce' | 'verify'
+    resolution: RuntimeResolution
     options?: { sourceRoot?: string }
   } | undefined,
   install: vi.fn(),
@@ -17,7 +16,7 @@ vi.mock('node:worker_threads', () => ({
 }))
 
 vi.mock('../src/profile-resolution/resolver.ts', () => ({
-  installProfileResolution: harness.install,
+  installRuntimeInterception: harness.install,
 }))
 
 beforeEach(() => {
@@ -31,27 +30,29 @@ it('does nothing without inherited profile resolution data', async () => {
   expect(harness.install).not.toHaveBeenCalled()
 })
 
-it('installs the inherited generation, behavior, and source routing', async () => {
-  const generation: ProfileResolutionGeneration = {
+it('installs the inherited resolution', async () => {
+  const resolution: RuntimeResolution = {
     profilesDir: '/profiles',
     profileDir: '/profiles/test',
     localPackageNames: [],
+    linkedRoots: [],
+    entries: [],
+  }
+  harness.data = { resolution }
+  await import('../src/profile-resolution/worker-bootstrap.ts')
+  expect(harness.install).toHaveBeenCalledWith(resolution, {})
+})
+
+it('installs inherited source routing with the resolution', async () => {
+  const resolution: RuntimeResolution = {
+    profilesDir: '/profiles',
+    profileDir: '/profiles/test',
+    localPackageNames: [],
+    linkedRoots: [],
     entries: [],
   }
   const options = { sourceRoot: '/workspace' }
-  harness.data = { generation, behavior: 'verify', options }
+  harness.data = { resolution, options }
   await import('../src/profile-resolution/worker-bootstrap.ts')
-  expect(harness.install).toHaveBeenCalledWith(generation, 'verify', options)
-})
-
-it('defaults source routing for generation data published without it', async () => {
-  const generation: ProfileResolutionGeneration = {
-    profilesDir: '/profiles',
-    profileDir: '/profiles/test',
-    localPackageNames: [],
-    entries: [],
-  }
-  harness.data = { generation, behavior: 'enforce' }
-  await import('../src/profile-resolution/worker-bootstrap.ts')
-  expect(harness.install).toHaveBeenCalledWith(generation, 'enforce', {})
+  expect(harness.install).toHaveBeenCalledWith(resolution, options)
 })
