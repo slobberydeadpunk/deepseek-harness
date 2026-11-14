@@ -49,6 +49,8 @@ When Gateway is mounted, a Client query with no live event stream fails before d
 
 Client queries accept the first valid page response within `clientInspectTimeoutMs`. A failed page does not prevent another page from answering successfully. If no valid result arrives, the query rejects with the first Client failure or output-validation diagnostic; when no page answers, it asks the caller to open or reconnect the Harness page and retry. Cancellation and registry disposal also end pending queries. Reconnecting a page does not replay a missed request, so retry after the connection is restored. Host queries are unaffected by this timeout.
 
+Query failures throw `InspectError`: `INSPECT_PROVIDER_NOT_FOUND`, `INSPECT_METHOD_NOT_FOUND`, and `INSPECT_INVALID_INPUT` reject the request before dispatch; `INSPECT_INVALID_OUTPUT` rejects a provider value; `INSPECT_CLIENT_UNAVAILABLE` reports a missing page or registry disposal; and `INSPECT_TIMEOUT` reports the Client deadline. A Host provider may throw its own `HarnessError`, such as `INSPECT_TARGET_NOT_FOUND`; any other provider failure becomes `INSPECT_FAILED` with the original error as `cause`. Cancellation rethrows the signal's reason.
+
 ### What a run does
 
 Programmatic callers use `define`, `run`, `stop`, and `undefine`; the browser panel operates existing definitions. Host-only packages activate in this process. A package with a browser half waits for approval or cancellation, then loads Host before Client. `mode: "run"` starts the current version; `mode: "update"` replaces it. Stop disposes the live effects and retains the definition; undefine also forgets it.
@@ -57,9 +59,11 @@ Programmatic callers use `define`, `run`, `stop`, and `undefine`; the browser pa
 
 Definitions are session-scoped and process-local: other sessions read them as absent, and restart clears them. Historical logs retain tool arguments and receipts but do not restore the registry. Reloading a browser page requires another explicit run to load its Client half.
 
+A tool defined through `harness.defineTool` fails with `PluginToolError`: `PLUGIN_TOOL_FAILED` when `execute` throws, keeping the thrown message and any string `code` in `message`, and `PLUGIN_TOOL_INVALID_RESULT` when it returns a value that is not lossless JSON data. A thrown `HarnessError` and any failure after cancellation keep their own identity.
+
 ### Trust stance
 
-The sandbox isolates globals but is not a security boundary: Node globals are absent or redirect to Cordis services (`ctx.fs`, `ctx.web`, `ctx.bash`, the timer helpers), and a host half receives a façade without framework internals, yet the services it declares reach the live runtime. Treat a dynamic package like bash access — see the [self-referential toolset Agent Note](../../../.agents/notes/implemented/feature/2026-07-08-self-referential-cordis-toolset.md).
+The sandbox isolates globals but is not a security boundary: Node globals are absent or redirect to Cordis services (`ctx.fs`, `ctx.web`, `ctx.bash`, the timer helpers), and a host half receives a façade without framework internals, yet the services it declares reach the live runtime. Treat a dynamic package like bash access — see the [self-referential toolset reference](README.md).
 
 -----
 
@@ -105,7 +109,7 @@ Read these pages when the package-level contract is not enough. They move from t
 - [UI package](../ui-cordis/README.md) — the panel users approve and operate runs with.
 - [Generated configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-cordis-host-runner) — every accepted config field.
 - [Extensions subsystem](../../../docs/subsystems/extensions.md) — the generated `ctx.cordisInspect` and `ctx.dynamicCordisRunner` API and `cordis/*` events.
-- [Self-referential Cordis toolset Agent Note](../../../.agents/notes/implemented/feature/2026-07-08-self-referential-cordis-toolset.md) — sandbox semantics, lifecycle, and composition rationale.
+- [historical Self-referential Cordis toolset Agent Note](../../../.agents/notes/archived/feature/2026-07-08-self-referential-cordis-toolset.md) — sandbox semantics, lifecycle, and composition rationale.
 
 -----
 
@@ -150,5 +154,3 @@ These limits define when the runner needs special care. They are current package
 None.
 
 </details>
-
-**Runtime invariant:** No companion is published. The definition registry is process memory with no event stream to observe, and its one owned relation (a running definition owns a settled host-half fiber and its handler table) is established and unwound inside single awaited verbs, so package tests assert it directly.
